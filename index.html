@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>パチンコスランプグラフ解析アプリ</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    h1, h2 {
+      color: #333;
+    }
+    canvas {
+      margin: 10px;
+    }
+    .canvas-container {
+      position: relative;
+      display: inline-block;
+    }
+    .canvas-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+    table {
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #999;
+      padding: 5px;
+    }
+    input[type="range"] {
+      width: 300px;
+    }
+    .input-group {
+      margin: 10px 0;
+      display: block;
+    }
+    .instruction {
+      font-size: 0.9em;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>パチンコスランプグラフ解析アプリ</h1>
+
+  <!-- 画像アップロード＆プレビュー -->
+  <div class="group">
+    <label for="imageUpload">画像アップロード:</label>
+    <input type="file" id="imageUpload" accept="image/*">
+  </div>
+  <p class="instruction">
+    ※上部キャンバス上をクリックして画像の四隅（変換元のポイント）を選択してください。<br>
+    既にあるポイントはドラッグで移動できます。
+  </p>
+  <canvas id="originalCanvas" width="500" height="400"></canvas><br>
+  <button id="transformBtn">透視変換実行</button>
+
+  <h2>透視変換結果（ドラッグでラインを移動）</h2>
+  <p class="instruction">
+    下記の変換後キャンバス上に、３つの水平ラインを表示しています。<br>
+    【赤】：0枚ライン、【緑】：最終差枚ライン、【青】：基準x枚ライン（基準値は下部の入力欄から指定）。<br>
+    各ラインはドラッグで移動できます。
+  </p>
+  <canvas id="transformedCanvas" width="500" height="400"></canvas>
+
+  <!-- 入力項目と計算ボタン -->
+  <div class="input-group">
+    <label for="baselineXInput">基準x枚 (x の値)：</label>
+    <input type="number" id="baselineXInput" value="10000">
+  </div>
+  <button id="calcBtn">最終差枚計算</button>
+  <div id="result1"></div>
+  <div class="input-group">
+    <label for="diffInput">差枚入力（回転率算出用）：</label>
+    <input type="number" id="diffInput" value="0">
+  </div>
+  <div class="input-group">
+    <label for="dedama_sumInput">総獲得出玉：</label>
+    <input type="number" id="dedama_sumInput" value="0">
+  </div>
+  <div class="input-group">
+    <label for="totalStartsInput">確変中込み総回転数：</label>
+    <input type="number" id="totalStartsInput" value="0">
+  </div>
+
+  <!-- ボーナス履歴入力テーブル -->
+  <h2>ボーナス履歴入力</h2>
+  <table id="historyTable">
+    <thead>
+      <tr>
+        <th>インデックス</th>
+        <th>当たり種別</th>
+        <th>スタート回数</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- 初期状態では空。ボタンで行追加 -->
+    </tbody>
+  </table>
+  <div class="input-group">
+    <button id="addRowBtn">行追加</button>
+  </div>
+
+  <!-- Final Start と Machine Name 入力欄 -->
+  <div class="input-group">
+    <label for="finalStartInput">現在スタート回数:</label>
+    <input type="number" id="finalStartInput" value="0">
+  </div>
+  <div class="input-group">
+    <label for="machineNameSelect">機種名:</label>
+    <select id="machineNameSelect">
+      <option value="e Re:ｾﾞﾛ season2 M13">e Re:ｾﾞﾛ season2 M13</option>
+      <option value="P大海物語5 MTE2">P大海物語5 MTE2</option>
+      <option value="P新世ｴｳﾞｧ15未来への咆哮">P新世ｴｳﾞｧ15未来への咆哮</option>
+    </select>
+  </div>
+
+  <!-- 計算実行ボタン（ボーナス履歴からの計算） -->
+  <div class="input-group">
+    <button id="calculateBtn">計算</button>
+  </div>
+  <div id="result"></div>
+  <div id="result2"></div>
+  <div id="result3"></div>
+
+
+  <!-- OpenCV.js の読み込み（透視変換用） -->
+  <!-- OpenCV.js を非同期で読み込み、ロード完了時に onOpenCvReady を呼び出す -->
+  <script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="onOpenCvReady()"></script>
+
+  <script>
+    let isOpenCvInitialized = false;
+
+    // OpenCV.js の読み込み完了後に呼び出される関数
+    function onOpenCvReady() {
+      if (typeof cv === 'undefined') {
+        console.error("OpenCV.js のロードに失敗しました。cv オブジェクトが未定義です。");
+        return;
+      }
+
+      // OpenCV.jsのランタイム初期化を待つ
+      cv['onRuntimeInitialized'] = () => {
+        isOpenCvInitialized = true;
+        console.log("OpenCV.js ランタイムが初期化されました。");
+        document.getElementById('transformBtn').disabled = false;  // ボタンを有効化
+      };
+    }
+
+    // OpenCV.js の読み込みエラー時に呼び出される関数
+    function onOpenCvError() {
+      console.error("OpenCV.js の読み込みに失敗しました。スクリプトがロードされませんでした。");
+      alert("OpenCV.js の読み込みに失敗しました。ページを再読み込みして、もう一度試してください。");
+    }
+
+    // ページ読み込み時に transformBtn を無効化
+    window.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('transformBtn').disabled = true;  // ボタンを初期状態で無効化
+    });
+    // -----------------------
+    // ① 画像アップロード＆四隅タップで選択（originalCanvas）
+    // -----------------------
+    const originalCanvas = document.getElementById('originalCanvas');
+    const origCtx = originalCanvas.getContext('2d');
+    let imgElement = null;
+    let corners = [];  // 四隅ポイント
+    let draggingCorner = -1;  // ドラッグ中のポイントのインデックス（-1は未選択）
+    const pointRadius = 6;
+
+    // 画像アップロード
+    document.getElementById('imageUpload').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        imgElement = new Image();
+        imgElement.onload = function() {
+          originalCanvas.width = imgElement.width;
+          originalCanvas.height = imgElement.height;
+          origCtx.drawImage(imgElement, 0, 0);
+          corners = []; // 四隅ポイントを初期化
+          console.log("画像描画完了");
+        };
+        imgElement.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // originalCanvas でのクリック＆ドラッグ処理（四隅ポイントの選択）
+    originalCanvas.addEventListener('mousedown', function(e) {
+      const rect = originalCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      // 既存のポイントが近ければドラッグ開始
+      for (let i = 0; i < corners.length; i++) {
+        const pt = corners[i];
+        if (Math.hypot(pt.x - x, pt.y - y) < pointRadius * 2) {
+          draggingCorner = i;
+          return;
+        }
+      }
+      // 4点未満なら新規に追加
+      if (corners.length < 4) {
+        corners.push({ x, y });
+        drawOriginalCanvas();
+      }
+    });
+    originalCanvas.addEventListener('mousemove', function(e) {
+      if (draggingCorner === -1) return;
+      const rect = originalCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      corners[draggingCorner] = { x, y };
+      drawOriginalCanvas();
+    });
+    originalCanvas.addEventListener('mouseup', function(e) {
+      draggingCorner = -1;
+    });
+    originalCanvas.addEventListener('mouseleave', function(e) {
+      draggingCorner = -1;
+    });
+
+    // originalCanvas 上に画像と四隅ポイントを描画
+    function drawOriginalCanvas() {
+      if (!imgElement) return;
+      origCtx.clearRect(0, 0, originalCanvas.width, originalCanvas.height);
+      origCtx.drawImage(imgElement, 0, 0);
+      corners.forEach(pt => {
+        origCtx.beginPath();
+        origCtx.arc(pt.x, pt.y, pointRadius, 0, 2 * Math.PI);
+        origCtx.fillStyle = "yellow";
+        origCtx.fill();
+        origCtx.strokeStyle = "black";
+        origCtx.stroke();
+      });
+      if (corners.length === 4) {
+        origCtx.beginPath();
+        origCtx.moveTo(corners[0].x, corners[0].y);
+        for (let i = 1; i < 4; i++) {
+          origCtx.lineTo(corners[i].x, corners[i].y);
+        }
+        origCtx.closePath();
+        origCtx.strokeStyle = "orange";
+        origCtx.lineWidth = 2;
+        origCtx.stroke();
+      }
+    }
+
+    // 透視変換用キャンバス等
+    const transformedCanvas = document.getElementById('transformedCanvas');
+    const transCtx = transformedCanvas.getContext('2d');
+    let transformedImg = null;
+    let draggableLines = [
+      { name: 'zero', y: 50, color: 'rgba(255, 0, 0, 0.5)' },  // 赤色、50%透過
+      { name: 'final', y: 150, color: 'rgba(0, 255, 0, 0.5)' },  // 緑色、50%透過
+      { name: 'xline', y: 250, color: 'rgba(0, 0, 255, 0.5)' }   // 青色、50%透過
+    ];
+    let draggingLineIndex = -1;
+
+    document.getElementById('transformBtn').addEventListener('click', function() {
+      if (!isOpenCvInitialized) { // 初期化フラグをチェック
+        alert('OpenCV の初期化が完了していません。しばらくお待ちください。');
+        return;
+      }
+      if (!imgElement) {
+        alert('画像をアップロードしてください。');
+        return;
+      }
+      if (corners.length !== 4) {
+        alert('透視変換するために4点選択してください。');
+        return;
+      }
+      function reorderPoints(corners) {
+        // 左上、右上、右下、左下 の順に並べるためのロジック
+        // ここでは、四隅をX, Y 座標で比較し、順番を決める方法を示します。
+
+        // 四隅の座標をX, Y で比較
+        const sortedCorners = corners.sort((a, b) => a.y - b.y || a.x - b.x);
+
+        // 左上、右上、右下、左下の順番に並べ替える
+        const topLeft = sortedCorners[0].x < sortedCorners[1].x ? sortedCorners[0] : sortedCorners[1];
+        const topRight = sortedCorners[0].x < sortedCorners[1].x ? sortedCorners[1] : sortedCorners[0];
+        const bottomLeft = sortedCorners[2].x < sortedCorners[3].x ? sortedCorners[2] : sortedCorners[3];
+        const bottomRight = sortedCorners[2].x < sortedCorners[3].x ? sortedCorners[3] : sortedCorners[2];
+
+        return [topLeft, topRight, bottomRight, bottomLeft];
+      }
+      const orderedCorners = reorderPoints(corners);
+      console.log("orderedCorners =", orderedCorners);
+      try {
+        const ctxOrig = originalCanvas.getContext("2d");
+        const imageData = ctxOrig.getImageData(0, 0, originalCanvas.width, originalCanvas.height);
+        // 新たにMatを生成（height × width, 8ビット4チャネル）
+        let src = new cv.Mat(originalCanvas.height, originalCanvas.width, cv.CV_8UC4);
+        src.data.set(imageData.data);
+
+        let dst = new cv.Mat();
+        let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+          orderedCorners[0].x, orderedCorners[0].y,
+          orderedCorners[1].x, orderedCorners[1].y,
+          orderedCorners[2].x, orderedCorners[2].y,
+          orderedCorners[3].x, orderedCorners[3].y
+        ]);
+        let dsize = new cv.Size(src.cols, src.rows);
+        let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+          0, 0,
+          dsize.width, 0,
+          dsize.width, dsize.height,
+          0, dsize.height
+        ]);
+        let M = cv.getPerspectiveTransform(srcTri, dstTri);
+        cv.warpPerspective(src, dst, M, dsize);
+        cv.imshow(transformedCanvas, dst);
+        transformedImg = new Image();
+        transformedImg.src = transformedCanvas.toDataURL();
+        drawDraggableLines();
+        src.delete(); dst.delete(); srcTri.delete(); dstTri.delete(); M.delete();
+      } catch (err) {
+        console.error("透視変換エラー:", err);
+      }
+    });
+
+    // -----------------------
+    // ③ transformedCanvas 上でドラッグ可能なライン操作
+    // -----------------------
+    function drawDraggableLines() {
+      if (!transformedImg) return;
+      transCtx.clearRect(0, 0, transformedCanvas.width, transformedCanvas.height);
+      transCtx.drawImage(transformedImg, 0, 0, transformedCanvas.width, transformedCanvas.height);
+      draggableLines.forEach(line => {
+        transCtx.beginPath();
+        transCtx.moveTo(0, line.y);
+        transCtx.lineTo(transformedCanvas.width, line.y);
+        transCtx.strokeStyle = line.color;
+        transCtx.lineWidth = 3;
+        transCtx.stroke();
+        transCtx.font = "16px sans-serif";
+        transCtx.fillStyle = line.color;
+        transCtx.fillText(line.name + "ライン", 10, line.y - 5);
+      });
+    }
+
+    transformedCanvas.addEventListener('mousedown', function(e) {
+      const rect = transformedCanvas.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      draggableLines.forEach((line, index) => {
+        if (Math.abs(line.y - y) < 8) {
+          draggingLineIndex = index;
+        }
+      });
+    });
+    transformedCanvas.addEventListener('mousemove', function(e) {
+      if (draggingLineIndex === -1) return;
+      const rect = transformedCanvas.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      draggableLines[draggingLineIndex].y = y;
+      drawDraggableLines();
+    });
+    transformedCanvas.addEventListener('mouseup', function(e) {
+      draggingLineIndex = -1;
+    });
+    transformedCanvas.addEventListener('mouseleave', function(e) {
+      draggingLineIndex = -1;
+    });
+
+    // -----------------------
+    // ④ 計算処理（最終差枚）
+    // -----------------------
+    document.getElementById('calcBtn').addEventListener('click', function() {
+      const zeroLine = draggableLines.find(l => l.name === 'zero').y;
+      const finalLine = draggableLines.find(l => l.name === 'final').y;
+      const baseLine = draggableLines.find(l => l.name === 'xline').y;
+      const baselineX = parseFloat(document.getElementById('baselineXInput').value) || 0;
+      const ratio = (finalLine - zeroLine) / (baseLine - zeroLine);
+      const calculatedFinalDiff = ratio * baselineX;
+      document.getElementById('result1').innerHTML =
+        `<p>比率 : ${ratio.toFixed(2)}</p>
+         <p>算出最終差枚 : ${calculatedFinalDiff.toFixed(2)}</p>`;
+    });
+
+    // -----------------------
+    // ⑤ ボーナス履歴からの計算処理（例：eF.戦姫絶唱ｼﾝﾌｫｷﾞｱ4 F の簡易ルール）
+    // -----------------------
+    document.getElementById('calculateBtn').addEventListener('click', function() {
+      const tbody = document.getElementById('historyTable').getElementsByTagName('tbody')[0];
+      const rows = tbody.getElementsByTagName('tr');
+      const starts = [];
+      const types = [];
+      for (let row of rows) {
+        const cells = row.getElementsByTagName('td');
+        const type = cells[1].getElementsByTagName('select')[0].value;
+        const startNum = parseInt(cells[2].getElementsByTagName('input')[0].value) || 0;
+        starts.push(startNum);
+        types.push(type);
+      }
+      const finalStart = parseInt(document.getElementById('finalStartInput').value) || 0;
+      const machineName = document.getElementById('machineNameSelect').value;
+      const dedama_sum = parseFloat(document.getElementById('dedama_sumInput').value) || 0;
+      const sadama = parseInt(document.getElementById('diffInput').value) || 0;
+      const totalStarts = parseInt(document.getElementById('totalStartsInput').value) || 0;
+
+      let decreaseStart = 0;
+      // e Re:ｾﾞﾛ season2 M13
+      if (machineName === "e Re:ｾﾞﾛ season2 M13") {
+        for (let i = 0; i < starts.length - 1; i++) {
+          if (types[i] === "確変" && types[i+1] === "通常") {
+            decreaseStart += 145;
+          }
+        }
+        if (finalStart > 145 && types[starts.length - 1] === "確変") {
+          decreaseStart += 145;
+        }
+      }
+
+      // P大海物語5 MTE2
+      else if (machineName === "P大海物語5 MTE2") {
+        for (let i = 0; i < starts.length - 1; i++) {
+          if (types[i] === "通常" && types[i+1] === "通常") {
+            if (starts[i+1] <= 100) {
+              decreaseStart += starts[i+1];
+            } else {
+              decreaseStart += 100;
+            }
+          } else if (types[i] === "確変" && types[i+1] === "通常") {
+            if (starts[i+1] <= 100) {
+              decreaseStart += starts[i+1];
+            } else {
+              decreaseStart += 100;
+            }
+          }
+        }
+        if (finalStart < 100) {
+          decreaseStart += finalStart;
+        }
+        if (finalStart > 100) {
+          decreaseStart += 100;
+        }
+      }
+
+      // P新世ｴｳﾞｧ15未来への咆哮
+      else if (machineName === "P新世ｴｳﾞｧ15未来への咆哮") {
+        for (let i = 0; i < starts.length - 1; i++) {
+          if (types[i] === "通常" && types[i+1] === "通常") {
+            if (starts[i+1] <= 135) {
+              decreaseStart += starts[i+1];
+            } else {
+              decreaseStart += 135;
+            }
+          } else if (types[i] === "確変" && types[i+1] === "通常") {
+            if (starts[i+1] <= 163) {
+              decreaseStart += starts[i+1];
+            } else {
+              decreaseStart += 163;
+            }
+          }
+        }
+        if (types[starts.length - 1] === "通常") {
+          if (finalStart <= 135) {
+            decreaseStart += finalStart;
+          } else {
+            decreaseStart += 135;
+          }
+        }
+        if (types[starts.length - 1] === "確変") {
+          if (finalStart <= 163) {
+            decreaseStart += finalStart;
+          } else {
+            decreaseStart += 163;
+          }
+        }
+      }
+      const sum = starts.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
+      const normalStart = sum - decreaseStart;
+      const specialStart = totalStarts - normalStart;
+      if (dedama_sum - normalStart * 0.1 === 0) {
+        document.getElementById('result').innerHTML = `<p>計算できません（分母が0）</p>`;
+        return;
+      }
+      const borderDiffCalc = normalStart * 250 / (dedama_sum - sadama - specialStart * 0.05);
+      document.getElementById('result').innerHTML = `<p>計算結果 (1000円あたり回転率): ${borderDiffCalc.toFixed(2)}</p>`;
+      document.getElementById('result2').innerHTML = `<p>計算結果 (総回転数): ${totalStarts}</p>`;
+      document.getElementById('result3').innerHTML = `<p>計算結果 (通常時回転数): ${normalStart}</p>`;
+    });
+
+
+    // -----------------------
+    // ⑦ ボーナス履歴テーブルの行追加機能
+    // -----------------------
+    let indexCounter = 1;
+    document.getElementById('addRowBtn').addEventListener('click', function() {
+      const tbody = document.getElementById('historyTable').getElementsByTagName('tbody')[0];
+      const row = document.createElement('tr');
+      const indexCell = document.createElement('td');
+      indexCell.innerText = indexCounter++;
+      row.appendChild(indexCell);
+      const typeCell = document.createElement('td');
+      const typeSelect = document.createElement('select');
+      const optionNormal = document.createElement('option');
+      optionNormal.value = '通常';
+      optionNormal.text = '通常';
+      const optionKakuhen = document.createElement('option');
+      optionKakuhen.value = '確変';
+      optionKakuhen.text = '確変';
+      typeSelect.appendChild(optionNormal);
+      typeSelect.appendChild(optionKakuhen);
+      typeCell.appendChild(typeSelect);
+      row.appendChild(typeCell);
+      const startCell = document.createElement('td');
+      const startInput = document.createElement('input');
+      startInput.type = 'number';
+      startInput.value = 0;
+      startCell.appendChild(startInput);
+      row.appendChild(startCell);
+      tbody.appendChild(row);
+    });
+  </script>
+</body>
+</html>
