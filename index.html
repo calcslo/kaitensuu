@@ -189,7 +189,68 @@
       };
       reader.readAsDataURL(file);
     });
+	// === originalCanvas タッチ対応 ===
+	originalCanvas.addEventListener('touchstart', function(e) {
+	  e.preventDefault();
+	  const rect = originalCanvas.getBoundingClientRect();
+	  const touch = e.touches[0];
+	  const x = touch.clientX - rect.left;
+	  const y = touch.clientY - rect.top;
 
+	  for (let i = 0; i < corners.length; i++) {
+	    const pt = corners[i];
+	    if (Math.hypot(pt.x - x, pt.y - y) < pointRadius * 2) {
+	      draggingCorner = i;
+	      return;
+	    }
+	  }
+
+	  if (corners.length < 4) {
+	    corners.push({ x, y });
+	    drawOriginalCanvas();
+	  }
+	});
+
+	originalCanvas.addEventListener('touchmove', function(e) {
+	  e.preventDefault();
+	  if (draggingCorner === -1) return;
+	  const rect = originalCanvas.getBoundingClientRect();
+	  const touch = e.touches[0];
+	  const x = touch.clientX - rect.left;
+	  const y = touch.clientY - rect.top;
+	  corners[draggingCorner] = { x, y };
+	  drawOriginalCanvas();
+	});
+
+	originalCanvas.addEventListener('touchend', function(e) {
+	  draggingCorner = -1;
+	});
+
+	// === transformedCanvas タッチ対応 ===
+	transformedCanvas.addEventListener('touchstart', function(e) {
+	  e.preventDefault();
+	  const rect = transformedCanvas.getBoundingClientRect();
+	  const touch = e.touches[0];
+	  const x = touch.clientX - rect.left;
+	  const y = touch.clientY - rect.top;
+	  startX = x;
+	  dragging = true;
+	});
+
+	transformedCanvas.addEventListener('touchmove', function(e) {
+	  e.preventDefault();
+	  if (!dragging) return;
+	  const rect = transformedCanvas.getBoundingClientRect();
+	  const touch = e.touches[0];
+	  const x = touch.clientX - rect.left;
+	  const y = touch.clientY - rect.top;
+	  endX = x;
+	  drawLineOnTransformedCanvas();
+	});
+
+	transformedCanvas.addEventListener('touchend', function(e) {
+	  dragging = false;
+	});
     // originalCanvas でのクリック＆ドラッグ処理（四隅ポイントの選択）
     originalCanvas.addEventListener('mousedown', function(e) {
       const rect = originalCanvas.getBoundingClientRect();
