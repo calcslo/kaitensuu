@@ -190,39 +190,67 @@
       reader.readAsDataURL(file);
     });
 
-    // originalCanvas でのクリック＆ドラッグ処理（四隅ポイントの選択）
-    originalCanvas.addEventListener('mousedown', function(e) {
+   // 共通関数：イベントからキャンバス上の座標を取得
+    function getCanvasPosition(e) {
       const rect = originalCanvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      // 既存のポイントが近ければドラッグ開始
+      if (e.touches && e.touches.length > 0) {
+        return {
+          x: e.touches[0].clientX - rect.left,
+          y: e.touches[0].clientY - rect.top,
+        };
+      } else {
+        return {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+      }
+    }
+
+    // ポインター開始（mousedown / touchstart）
+    function onPointerDown(e) {
+      const { x, y } = getCanvasPosition(e);
+
       for (let i = 0; i < corners.length; i++) {
         const pt = corners[i];
         if (Math.hypot(pt.x - x, pt.y - y) < pointRadius * 2) {
           draggingCorner = i;
+          e.preventDefault(); // スクロール防止（タッチ）
           return;
         }
       }
-      // 4点未満なら新規に追加
+
       if (corners.length < 4) {
         corners.push({ x, y });
         drawOriginalCanvas();
+        e.preventDefault();
       }
-    });
-    originalCanvas.addEventListener('mousemove', function(e) {
+    }
+
+    // ポインター移動（mousemove / touchmove）
+    function onPointerMove(e) {
       if (draggingCorner === -1) return;
-      const rect = originalCanvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+
+      const { x, y } = getCanvasPosition(e);
       corners[draggingCorner] = { x, y };
       drawOriginalCanvas();
-    });
-    originalCanvas.addEventListener('mouseup', function(e) {
+      e.preventDefault();
+    }
+
+    // ポインター終了（mouseup / touchend / mouseleave / touchcancel）
+    function onPointerUp(e) {
       draggingCorner = -1;
-    });
-    originalCanvas.addEventListener('mouseleave', function(e) {
-      draggingCorner = -1;
-    });
+    }
+
+    // イベント登録
+    originalCanvas.addEventListener('mousedown', onPointerDown);
+    originalCanvas.addEventListener('mousemove', onPointerMove);
+    originalCanvas.addEventListener('mouseup', onPointerUp);
+    originalCanvas.addEventListener('mouseleave', onPointerUp);
+
+    originalCanvas.addEventListener('touchstart', onPointerDown, { passive: false });
+    originalCanvas.addEventListener('touchmove', onPointerMove, { passive: false });
+    originalCanvas.addEventListener('touchend', onPointerUp);
+    originalCanvas.addEventListener('touchcancel', onPointerUp);
 
     // originalCanvas 上に画像と四隅ポイントを描画
     function drawOriginalCanvas() {
@@ -344,28 +372,53 @@
       });
     }
 
-    transformedCanvas.addEventListener('mousedown', function(e) {
+    // 共通関数：キャンバス内のY座標取得
+    function getCanvasY(e) {
       const rect = transformedCanvas.getBoundingClientRect();
-      const y = e.clientY - rect.top;
+      if (e.touches && e.touches.length > 0) {
+        return e.touches[0].clientY - rect.top;
+      } else {
+        return e.clientY - rect.top;
+      }
+    }
+
+    // ポインター開始（mousedown / touchstart）
+    function onLinePointerDown(e) {
+      const y = getCanvasY(e);
       draggableLines.forEach((line, index) => {
         if (Math.abs(line.y - y) < 8) {
           draggingLineIndex = index;
+          e.preventDefault(); // タッチ時のスクロール防止
         }
       });
-    });
-    transformedCanvas.addEventListener('mousemove', function(e) {
+    }
+
+    // ポインター移動（mousemove / touchmove）
+    function onLinePointerMove(e) {
       if (draggingLineIndex === -1) return;
-      const rect = transformedCanvas.getBoundingClientRect();
-      const y = e.clientY - rect.top;
+
+      const y = getCanvasY(e);
       draggableLines[draggingLineIndex].y = y;
       drawDraggableLines();
-    });
-    transformedCanvas.addEventListener('mouseup', function(e) {
+      e.preventDefault();
+    }
+
+    // ポインター終了（mouseup / mouseleave / touchend / touchcancel）
+    function onLinePointerUp(e) {
       draggingLineIndex = -1;
-    });
-    transformedCanvas.addEventListener('mouseleave', function(e) {
-      draggingLineIndex = -1;
-    });
+    }
+
+    // イベント登録
+    transformedCanvas.addEventListener('mousedown', onLinePointerDown);
+    transformedCanvas.addEventListener('mousemove', onLinePointerMove);
+    transformedCanvas.addEventListener('mouseup', onLinePointerUp);
+    transformedCanvas.addEventListener('mouseleave', onLinePointerUp);
+
+    transformedCanvas.addEventListener('touchstart', onLinePointerDown, { passive: false });
+    transformedCanvas.addEventListener('touchmove', onLinePointerMove, { passive: false });
+    transformedCanvas.addEventListener('touchend', onLinePointerUp);
+    transformedCanvas.addEventListener('touchcancel', onLinePointerUp);
+
 
     // -----------------------
     // ④ 計算処理（最終差枚）
